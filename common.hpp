@@ -12,6 +12,7 @@ typedef struct PACKET packet_t;
 typedef struct sockaddr socka;
 
 // Odrzava jedan socket
+// U sustini wrappuje funkcije iz ovih biblioteka
 struct Socket {
 
 	int sock_id;
@@ -83,10 +84,10 @@ struct Socket {
     	setsockopt(sock_id, SOL_SOCKET, SO_REUSEADDR, &en, sizeof(int));
 
 		int conn = connect(sock_id, (socka*)&a, sizeof(a));
-#ifdef DEBUG
-		cerr << "Socket ID: " << sock_id << '\n';
-		cerr << "Connection ID: " << conn << '\n';
-#endif
+		#ifdef DEBUG
+			cerr << "Socket ID: " << sock_id << '\n';
+			cerr << "Connection ID: " << conn << '\n';
+		#endif
 		return sock_id;
 	}
 
@@ -104,9 +105,9 @@ struct Socket {
 		bind(sock_id, (socka*)&a, sizeof(a));
 		listen(sock_id, backlog_size);
  
-#ifdef DEBUG
-		cerr << "Socket ID: " << sock_id << '\n';
-#endif
+		#ifdef DEBUG
+			cerr << "Socket ID: " << sock_id << '\n';
+		#endif
 		return sock_id;
 	}
 
@@ -116,32 +117,40 @@ struct Socket {
 };
 
 // Odrzava jednu klijentsku konekciju
-struct Connection : public Socket {
+// Konekcija je jednostavna, kada klijent posalje podatke
+// zatvara svoj kraj konekcije, zatim ceka odgovor.
+struct SimpleConnection : private Socket {
 
-	Connection(const string& address, int port = 80) :
+	SimpleConnection(const string& address, int port = 80) :
 		Socket(Socket::get_client(address, port)) {}
-};
 
-// Prima podatke sa socketa, zove funkciju, salje odgovor
-// i zatvara socket. 
-template<class T>
-void serve(int sock_id, T cb) {
-	Socket sock(sock_id);
-	string req = sock.receive();
-#ifdef DEBUG
-	cerr << "Received request of size " << req.size() << '\n';
-#endif
-	string resp = cb(req);
-#ifdef DEBUG
-	cerr << "Sending response of size " << resp.size() << '\n';
-#endif
-	sock.send(resp);
-	sock.finish_sending();
-}
+	string query(const string& str) {
+		send(str);
+		finish_sending();
+		return receive();
+	}
+};
 
 // Slusa za zahteve na datom portu i odgovara na upite.
 // Moguce su paralelne konekcije
 struct SimpleParallelServer {
+
+	// Prima podatke sa socketa, zove funkciju, salje odgovor
+	// i zatvara socket. 
+	template<class T>
+	static void serve(int sock_id, T cb) {
+		Socket sock(sock_id);
+		string req = sock.receive();
+		#ifdef DEBUG
+			cerr << "Received request of size " << req.size() << '\n';
+		#endif
+		string resp = cb(req);
+		#ifdef DEBUG
+			cerr << "Sending response of size " << resp.size() << '\n';
+		#endif
+		sock.send(resp);
+		sock.finish_sending();
+	}
 
 	int port;
 
@@ -159,4 +168,107 @@ struct SimpleParallelServer {
 			t.detach();
 		}
 	}
+};
+
+struct StreamingSocket {
+
+	int sock_id;
+
+	explicit Socket(int sock_id) : sock_id(sock_id) {}
+
+	Socket() : sock_id(-1) {}
+
+	void send(const string& data) {
+		if (sock_id == -1) return;
+		const char* p = data.c_str();
+		size_t sent = 0;
+		while (sent < data.size()) {
+			ssize_t status = ::send(sock_id, p+sent, data.size()-sent, 0);
+			if (status <= 0) {
+				// error handling
+				return;
+			}
+			sent += status;
+		}
+	}
+
+	void finish() {
+		if (sock_id == -1) return;
+		::send(sock_id, nullptr, 0, MSG_EOR);
+	}
+
+	Socket& operator= (Socket&& other) {
+		tidy();
+		sock_id = other.sock_id;
+		other.sock_id = -1;
+	}
+
+	string receive(int buf_size = 4096) {
+		if (sock_id == -1) return "";
+		char* buffer = new char[buf_size];
+		string result;
+		while (1) {
+			ssize_t status = recv(sock_id, buffer, buf_size, 0);
+			if (status <= 0) {
+				delete[] buffer;
+				return result;
+			} else {
+				result += string(buffer, buffer+status);
+			}
+		}
+	}
+
+	void tidy() {
+		if (sock_id != -1) {
+			shutdown(sock_id, 0);
+		}
+	}
+
+	~Socket() {
+		tidy();
+	}
+
+	static int get_client(const string& address, int port) {
+		sockai a;
+		a.sin_family = AF_INET;
+		a.sin_addr.s_addr = inet_addr(address.c_str());
+		a.sin_port = htons(port);
+		
+		int sock_id = socket(AF_INET, SOCK_STREAM, 0);
+
+		int en = 1;
+    	setsockopt(sock_id, SOL_SOCKET, SO_REUSEADDR, &en, sizeof(int));
+
+		int conn = connect(sock_id, (socka*)&a, sizeof(a));
+		#ifdef DEBUG
+			cerr << "Socket ID: " << sock_id << '\n';
+			cerr << "Connection ID: " << conn << '\n';
+		#endif
+		return sock_id;
+	}
+
+	static int get_server(int port, int backlog_size = 10) {
+		sockai a;
+		memset(&a, 0, sizeof(a));
+		a.sin_family = AF_INET;
+		a.sin_port = htons(port);
+
+		int sock_id = socket(AF_INET, SOCK_STREAM, 0);
+		
+		int en = 1;
+		setsockopt(sock_id, SOL_SOCKET, SO_REUSEADDR, &en, sizeof(int));
+		
+		bind(sock_id, (socka*)&a, sizeof(a));
+		listen(sock_id, backlog_size);
+ 
+		#ifdef DEBUG
+			cerr << "Socket ID: " << sock_id << '\n';
+		#endif
+		return sock_id;
+	}
+
+	void finish_sending() {
+		shutdown(sock_id, SHUT_WR);
+	}
+
 };
