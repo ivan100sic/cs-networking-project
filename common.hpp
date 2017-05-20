@@ -44,6 +44,7 @@ struct Socket {
 		tidy();
 		sock_id = other.sock_id;
 		other.sock_id = -1;
+		return *this;
 	}
 
 	string receive(int buf_size = 4096) {
@@ -84,10 +85,18 @@ struct Socket {
     	setsockopt(sock_id, SOL_SOCKET, SO_REUSEADDR, &en, sizeof(int));
 
 		int conn = connect(sock_id, (socka*)&a, sizeof(a));
+		if (conn < 0) {
+			if (sock_id != -1) {
+				shutdown(sock_id, 0);
+				sock_id = -1;
+			}
+		}
+
 		#ifdef DEBUG
 			cerr << "Socket ID: " << sock_id << '\n';
 			cerr << "Connection ID: " << conn << '\n';
 		#endif
+		
 		return sock_id;
 	}
 
@@ -190,7 +199,8 @@ struct StreamingSocket {
 				size++;
 			}
 		}
-		char* p = new char[size + 1]; // +1 je za poslednji EOB
+		++size;
+		char* p = new char[size]; // +1 je za poslednji EOB
 
 		size_t j = 0;
 		for (size_t i = 0; i < data.size(); i++) {
@@ -217,10 +227,11 @@ struct StreamingSocket {
 		::send(sock_id, nullptr, 0, MSG_EOR);
 	}
 
-	Socket& operator= (Socket&& other) {
+	StreamingSocket& operator= (StreamingSocket&& other) {
 		tidy();
 		sock_id = other.sock_id;
 		other.sock_id = -1;
+		return *this;
 	}
 
 	// Buffer sadrzi parsovane charove
@@ -282,15 +293,6 @@ struct StreamingSocket {
 		tidy();
 	}
 
-	// Iste funkcije kao za socket, nema razlike
-	static int get_client(const string& address, int port) {
-		return Socket::get_client(address, port);
-	}
-
-	static int get_server(int port, int backlog_size = 10) {
-		return Socket::get_server(port, backlog_size);
-	}
-
 	// Zvati kad hocemo da zatvorimo jednu stranu konekcije
 	// odnosno kad necemo vise da saljemo blokove
 	void finish_sending() {
@@ -303,10 +305,10 @@ struct StreamingSocket {
 // T - objekat za sinhronizaciju. Za svaki socket se pravi tacno jedan.
 //	treba da primi StreamingSocket& parametar
 // U - funkcija koja se zove kada se primi blok.
-//	primer: receive(T& obj, const string& str);
+//	primer: receive(T* obj, const string& str);
 // V - funkcija koja se zove na pocetku, koja managuje sinhronizaciju
 // i takodje koristi socket za slanje
-//	primer: run(T& obj);
+//	primer: run(T* obj);
 
 struct StreamingParallelServer {
 
@@ -317,12 +319,12 @@ struct StreamingParallelServer {
 		StreamingSocket sock(sock_id);
 		T obj(sock);
 		auto recv_lambda = [&](const string& str) {
-			receive_func(obj, str);
+			receive_func(&obj, str);
 		};
-		thread t1(run_func, obj);
-		t1.detach();
+		thread t1(run_func, &obj);
 		// loop za primanje blokova
 		sock.receive(recv_lambda);
+		t1.join();
 	}
 
 	int port;
@@ -333,8 +335,8 @@ struct StreamingParallelServer {
 	void run(U receive_func, V run_func) {
 		int server_sock = Socket::get_server(port);
 		while (1) {
-			sockai remote;
-			socklen_t len = sizeof(sockai);
+			// sockai remote;
+			// socklen_t len = sizeof(sockai);
 			// int sock = accept(server_sock, (socka*)&remote, &len);
 			int sock = accept(server_sock, nullptr, nullptr);
 			thread t(serve<T, U, V>, sock, receive_func, run_func);
