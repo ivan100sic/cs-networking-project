@@ -170,17 +170,14 @@ struct SimpleParallelServer {
 	}
 };
 
-template<typename T>
 struct StreamingSocket {
 
 	static const char ESC = 0xab;
 	static const char EOB = 0xcd;
 
 	int sock_id;
-	T cb;
 
-	explicit StreamingSocket(int sock_id, T callback) : 
-		sock_id(sock_id), cb(callback) {}
+	explicit StreamingSocket(int sock_id) : sock_id(sock_id) {}
 
 	// Posalji jedan blok podataka
 	void send(const string& data) {
@@ -232,7 +229,8 @@ struct StreamingSocket {
 	// Granicni slucaj: da li imamo neobradjen escape karakter na kraju bafera
 	bool recv_is_escaped;
 
-	void push_to_buffer(const char* begin, const char* end) {
+	template<class T>
+	void push_to_buffer(const char* begin, const char* end, T cb) {
 		while (begin != end) {
 			if (recv_is_escaped) {
 				recv_buffer += *begin++;
@@ -255,7 +253,8 @@ struct StreamingSocket {
 	// se konekcija izgubi, funkcija ce se zavrsiti. U suprotnom, funkcija
 	// puni svoj bafer, i kada ocita kraj jednog bloka, zove callback
 	// funkciju sa obradjenim podacima
-	void receive(int buf_size = 4096) {
+	template<class T>
+	void receive(T cb, int buf_size = 4096) {
 		if (sock_id == -1) return;
 
 		char* buffer = new char[buf_size];
@@ -268,7 +267,7 @@ struct StreamingSocket {
 				delete[] buffer;
 				return;
 			} else {
-				push_to_buffer(buffer, buffer+status);
+				push_to_buffer(buffer, buffer+status, cb);
 			}
 		}
 	}
@@ -300,29 +299,45 @@ struct StreamingSocket {
 
 };
 
+// Template parametri:
+// T - objekat za sinhronizaciju. Za svaki socket se pravi tacno jedan.
+//	treba da primi StreamingSocket& parametar
+// U - funkcija koja se zove kada se primi blok.
+//	primer: receive(T& obj, const string& str);
+// V - funkcija koja se zove na pocetku, koja managuje sinhronizaciju
+// i takodje koristi socket za slanje
+//	primer: run(T& obj);
+
 struct StreamingParallelServer {
 
 	// Prima podatke sa socketa, zove funkciju, salje odgovor
 	// i zatvara socket. 
-	template<class T>
-	static void serve(int sock_id) {
-		T obj(StreamingSocket(sock_id));
-		obj.run();
+	template<class T, class U, class V>
+	static void serve(int sock_id, U receive_func, V run_func) {
+		StreamingSocket sock(sock_id);
+		T obj(sock);
+		auto recv_lambda = [&](const string& str) {
+			receive_func(obj, str);
+		};
+		thread t1(run_func, obj);
+		t1.detach();
+		// loop za primanje blokova
+		sock.receive(recv_lambda);
 	}
 
 	int port;
 
-	SimpleParallelServer(int port) : port(port) {}
+	StreamingParallelServer(int port) : port(port) {}
 
-	template<class T>
-	void run() {
+	template<class T, class U, class V>
+	void run(U receive_func, V run_func) {
 		int server_sock = Socket::get_server(port);
 		while (1) {
 			sockai remote;
 			socklen_t len = sizeof(sockai);
 			// int sock = accept(server_sock, (socka*)&remote, &len);
 			int sock = accept(server_sock, nullptr, nullptr);
-			thread t(serve<T>, sock, cb);
+			thread t(serve<T, U, V>, sock, receive_func, run_func);
 			t.detach();
 		}
 	}

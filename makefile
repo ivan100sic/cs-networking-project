@@ -13,3 +13,8 @@ streamclient: streamclient.cpp
 	g++ -pthread -O2 -std=c++14 streamclient.cpp -o streamclient
 
 stream: streamserver streamclient
+
+bane: bane-sserver
+
+bane-sserver: bane-sserver.cpp
+	g++ -pthread -O2 -std=c++14 bane-sserver.cpp -o bane-sserver
