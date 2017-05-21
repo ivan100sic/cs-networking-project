@@ -1,3 +1,6 @@
+#ifndef CSNPS_COMMON_HPP
+#define CSNPS_COMMON_HPP
+
 #include <iostream>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -26,7 +29,7 @@ struct Socket {
 		const char* p = data.c_str();
 		size_t sent = 0;
 		while (sent < data.size()) {
-			ssize_t status = ::send(sock_id, p+sent, data.size()-sent, 0);
+			ssize_t status = ::send(sock_id, p+sent, data.size()-sent, MSG_NOSIGNAL);
 			if (status <= 0) {
 				// error handling
 				return;
@@ -37,7 +40,7 @@ struct Socket {
 
 	void finish() {
 		if (sock_id == -1) return;
-		::send(sock_id, nullptr, 0, MSG_EOR);
+		::send(sock_id, nullptr, 0, MSG_EOR | MSG_NOSIGNAL);
 	}
 
 	Socket& operator= (Socket&& other) {
@@ -213,7 +216,7 @@ struct StreamingSocket {
 		
 		size_t sent = 0;
 		while (sent < size) {
-			ssize_t status = ::send(sock_id, p+sent, size-sent, 0);
+			ssize_t status = ::send(sock_id, p+sent, size-sent, MSG_NOSIGNAL);
 			if (status <= 0) {
 				// error handling
 				return;
@@ -224,7 +227,7 @@ struct StreamingSocket {
 
 	void finish() {
 		if (sock_id == -1) return;
-		::send(sock_id, nullptr, 0, MSG_EOR);
+		::send(sock_id, nullptr, 0, MSG_EOR | MSG_NOSIGNAL);
 	}
 
 	StreamingSocket& operator= (StreamingSocket&& other) {
@@ -344,3 +347,5 @@ struct StreamingParallelServer {
 		}
 	}
 };
+
+#endif

@@ -3,7 +3,7 @@ using namespace std;
 
 int main() {
 	// ajde da napravimo nesto ad-hoc
-	StreamingSocket ssock(Socket::get_client("10.1.1.213", 3333));
+	StreamingSocket ssock(Socket::get_client("127.0.0.1", 3333));
 
 	if (ssock.sock_id == -1) {
 		cerr << "Failed to connect!\n";
@@ -11,7 +11,7 @@ int main() {
 	}
 
 	auto recv_callback = [&](const string& str) {
-		cout << str;
+		cout << str[0];
 		cout.flush();
 	};
 
