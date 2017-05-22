@@ -11,6 +11,8 @@
 using namespace std;
 using namespace std::chrono;
 
+const snd_pcm_uframes_t BUFFER_SAMPLES = 1024;
+
 struct SoundRecorder {
 
 	snd_pcm_t* handle;
@@ -35,11 +37,11 @@ struct SoundRecorder {
 	// Zovi callback, predaj ceo buffer kao 2-kanalni vector<short>
 	// duzine 2 * buffer_size
 	template<class T>
-	void run (T callback, size_t buffer_size = 128) {
-		short* buf = new short[2 * buffer_size];
+	void run (T callback) {
+		short* buf = new short[2 * BUFFER_SAMPLES];
 		while (1) {
-			snd_pcm_readi(handle, buf, buffer_size);
-			vector<short> vec(buf, buf+buffer_size);
+			snd_pcm_readi(handle, buf, BUFFER_SAMPLES);
+			vector<short> vec(buf, buf+2*BUFFER_SAMPLES);
 			callback(move(vec));
 		}
 		// za slucaj da nekad odlucim da promenim while(1)
@@ -60,7 +62,6 @@ struct SoundPlayer {
 	mutex mtx;
 
 	SoundPlayer() {
-		unsigned int buffer_time = 60000;
 		int err = snd_pcm_open(&handle, "default", SND_PCM_STREAM_PLAYBACK, 0); // blocking pozivi
 		// realno jedino mesto gde moze da se desi nesto
 		if (err < 0) {
@@ -77,7 +78,7 @@ struct SoundPlayer {
 		unsigned int sample_rate = 44100;
 		snd_pcm_hw_params_set_rate_near(handle, params, &sample_rate, nullptr);
 		snd_pcm_hw_params_set_channels(handle, params, 2);
-		snd_pcm_hw_params_set_buffer_time_near(handle, params, &buffer_time, nullptr);
+		snd_pcm_hw_params_set_buffer_size(handle, params, BUFFER_SAMPLES);
 
 		snd_pcm_hw_params(handle, params);
 		snd_pcm_hw_params_free(params);
@@ -86,22 +87,47 @@ struct SoundPlayer {
 	// run kreira novi thread i izlazi
 	// kreirani thread nastavlja da pusta zvuke
 	static void run_impl(SoundPlayer* sp) {
-		int health = 64;
+		const int QUEUE_SIZE_OPTIMAL = 4;
+		const int QUEUE_SIZE_CRITICAL = 2;
+
+		int health = 1;
+		int filled = 0;
 		while (health > 0) {
+			{
+				unique_lock<mutex> lock(sp->mtx);
+				if (sp->q.size() < QUEUE_SIZE_OPTIMAL && !filled) {
+					// cekamo da se napuni jos malo
+					lock.unlock();
+					this_thread::sleep_for(milliseconds(60));
+				} else if (sp->q.size() >= QUEUE_SIZE_OPTIMAL && !filled) {
+					lock.unlock();
+					filled = 1;
+				}
+			}
+
 			unique_lock<mutex> lock(sp->mtx);
-			if (sp->q.size() < 2) {
-				// cekamo da se napuni jos malo
-				lock.unlock();
-				this_thread::sleep_for(milliseconds(60));
-				health--;
-			} else {
-				health = 64;
+			if (filled) {
+				size_t qsz = sp->q.size();
 				vector<int16_t> a = sp->q.front(); sp->q.pop();
 				lock.unlock();
 				int16_t* buff = new int16_t[a.size()];
 				for (size_t i=0; i<a.size(); i++) buff[i] = a[i];
 				// error handling?
-				snd_pcm_writei(sp->handle, buff, a.size());
+				int err = snd_pcm_writei(sp->handle, buff, BUFFER_SAMPLES);
+				if (err < 0) {
+					cerr << "err " << err << '\n';
+					health = 0;
+				}
+				// ako si ispod granice, pusti ga jos jednom
+				if (qsz <= QUEUE_SIZE_CRITICAL) {
+					cerr << "Hic!\n";
+					int err = snd_pcm_writei(sp->handle, buff, BUFFER_SAMPLES);
+					if (err < 0) {
+						cerr << "err " << err << '\n';
+						health = 0;
+					}
+				}
+
 				delete[] buff;
 			}
 		}

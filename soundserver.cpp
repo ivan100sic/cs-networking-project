@@ -20,7 +20,7 @@ void demo() {
 		}
 		tot = sqrt(tot / a.size());
 		cout << "Pwr: " << tot << '\n';
-	}, 1024);
+	});
 }
 
 namespace ss_instance {
@@ -70,7 +70,7 @@ void ss_run(State* obj) {
 			string str;
 			for (int16_t x : data) {
 				// ocitaj kao two's complement i stavi (little endian)
-				size_t y = (int)x + 65536;
+				size_t y = (int)x + 32768;
 				uint8_t b0 = y & 0xff;
 				uint8_t b1 = (y >> 8) & 0xff;
 				str.push_back(b0);

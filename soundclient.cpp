@@ -1,99 +1,57 @@
 #include "sound.hpp"
 #include "common.hpp"
 #include <vector>
+#include <string>
 #include <alsa/asoundlib.h>
 using namespace std;
 using namespace std::chrono;
 
-void demo() {
-	SoundRecorder srec;
-	srec.run([](vector<int16_t>&& a) {
-		double tot = 0;
-		for (int16_t x : a) {
-			tot += (double)x*x;
-		}
-		tot = sqrt(tot / a.size());
-		cout << "Pwr: " << tot << '\n';
-	}, 1024);
-}
-
-namespace ss_instance {
-	SoundRecorder* ptr;
-
-	size_t block_id = 0;
-	map<size_t, vector<int16_t>> backlog;
-	mutex mtx;
-
-	void update(vector<int16_t>&& a) {
-		unique_lock<mutex> lock(mtx);
-		block_id++;
-		backlog[block_id] = a;
-		if (block_id >= 16) {
-			backlog.erase(block_id - 16);
-		}
-	}
-}
-
-struct State {
-	StreamingSocket& sock;
-	State(StreamingSocket& sock) : sock(sock) {}
-};
-
-// Pri uspostavljanju konekcije ne radimo nista
-void ss_recv(State* obj, const string& str) {}
-
-// Prava magija se desava u ovoj funkciji
-void ss_run(State* obj) {
-	size_t next_block_id;
-	{
-		unique_lock<mutex> lock(ss_instance::mtx);
-		next_block_id = ss_instance::block_id;
-	}
-
-	while (1) {
-		unique_lock<mutex> lock(ss_instance::mtx);
-		if (next_block_id > ss_instance::block_id) {
-			// poranili smo, cekamo da se pojavi ovaj blok
-			lock.unlock();
-			this_thread::sleep_for(milliseconds(5));
-		} else if (next_block_id + 16 > ss_instance::block_id) {
-			// ocitaj ovaj blok, posalji ga na socket
-			vector<int16_t> data = ss_instance::backlog[next_block_id++];
-			lock.unlock();
-
-			string str;
-			for (int16_t x : data) {
-				// ocitaj kao two's complement i stavi (little endian)
-				size_t y = (int)x + 65536;
-				uint8_t b0 = y & 0xff;
-				uint8_t b1 = (y >> 8) & 0xff;
-				str.push_back(b0);
-				str.push_back(b1);
-			}
-			obj->sock.send(str);
-		} else {
-			// zavrsi, previse kasnis!
-			break;
-		}
-	}
-}
-
 int main(int argc, char** argv) {
-	int port = 3333;
-	if (argc == 2) {
-		port = stoi(argv[1]);
+
+	if (argc <= 1 || argc > 3) {
+		cout << "soundclient <host ip> [<port>=3333]\n";
 	}
 
-	SoundRecorder instance;
-	ss_instance::ptr = &instance;
+	const char* host_ip = argv[1];
+	int port = argc == 3 ? stoi(argv[2]) : 3333;
 
-	thread t([] {
-		ss_instance::ptr->run(ss_instance::update);
+	StreamingSocket ssock(Socket::get_client(host_ip, port));
+	if (ssock.sock_id == -1) {
+		cerr << "Failed to connect!\n";
+		return 0;
+	}
+
+	SoundPlayer player;
+
+	auto recv_callback = [&](const string& str) {
+		// cerr << "Audio block, bytes: " << str.size() << '\n';
+		vector<int16_t> a;
+		for (size_t i=0; i<str.size(); i+=2) {
+			uint8_t b0 = str[i];
+			uint8_t b1 = str[i+1];
+
+			int val = (int)b1 * 256 + b0;
+			int16_t x = val - 32768;
+			a.push_back(10*x);
+		}
+
+		/*
+		cerr << "Preview:";
+		for (size_t i=0; i<8; i++) cerr << ' ' << a[i];
+		cerr << '\n';
+		*/
+
+		player.add(a);
+	};
+
+	thread t1([&]() {
+		ssock.receive(recv_callback);
 	});
-	t.detach();
+	t1.detach();
 
-	StreamingParallelServer sserver(port);
-	sserver.run<State>(ss_recv, ss_run);
+	player.run();
 
-	return 0;	
+	cout << "Enjoy! Press enter to quit\n";
+	string w;
+	getline(cin, w);
 }

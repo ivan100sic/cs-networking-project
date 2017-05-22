@@ -18,7 +18,10 @@ stream: streamserver streamclient
 soundtest: soundtest.cpp
 	$(CCC) soundtest.cpp -lasound -o soundtest
 
-sound: soundserver
+sound: soundserver soundclient
 
 soundserver: soundserver.cpp sound.hpp common.hpp
 	$(CCC) soundserver.cpp -lasound -o soundserver
+
+soundclient: soundclient.cpp sound.hpp common.hpp
+	$(CCC) soundclient.cpp -lasound -o soundclient
