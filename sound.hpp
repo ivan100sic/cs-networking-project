@@ -84,13 +84,23 @@ struct SoundPlayer {
 		snd_pcm_hw_params_free(params);
 	}
 
+	static void snd_write_wrapper(snd_pcm_t* handle,
+		int16_t* buff, snd_pcm_uframes_t count, int& health)
+	{
+		int err = snd_pcm_writei(handle, buff, count);
+		if (err < 0) {
+			health = 0;
+		}
+	}
+
 	// run kreira novi thread i izlazi
 	// kreirani thread nastavlja da pusta zvuke
 	static void run_impl(SoundPlayer* sp) {
 		const int QUEUE_SIZE_OPTIMAL = 4;
 		const int QUEUE_SIZE_CRITICAL = 2;
+		const int QUEUE_SIZE_TOO_BIG = 256;
 
-		int health = 1;
+		int health = 64;
 		int filled = 0;
 		while (health > 0) {
 			{
@@ -108,27 +118,26 @@ struct SoundPlayer {
 			unique_lock<mutex> lock(sp->mtx);
 			if (filled) {
 				size_t qsz = sp->q.size();
-				vector<int16_t> a = sp->q.front(); sp->q.pop();
-				lock.unlock();
-				int16_t* buff = new int16_t[a.size()];
-				for (size_t i=0; i<a.size(); i++) buff[i] = a[i];
-				// error handling?
-				int err = snd_pcm_writei(sp->handle, buff, BUFFER_SAMPLES);
-				if (err < 0) {
-					cerr << "err " << err << '\n';
-					health = 0;
-				}
-				// ako si ispod granice, pusti ga jos jednom
-				if (qsz <= QUEUE_SIZE_CRITICAL) {
-					cerr << "Hic!\n";
-					int err = snd_pcm_writei(sp->handle, buff, BUFFER_SAMPLES);
-					if (err < 0) {
-						cerr << "err " << err << '\n';
-						health = 0;
-					}
-				}
+				cerr << "H: " << health << " Q" << qsz << '\r';
 
-				delete[] buff;
+				if (qsz <= QUEUE_SIZE_CRITICAL) {
+					lock.unlock();
+					health--;
+					int16_t* buff = new int16_t[2 * BUFFER_SAMPLES];
+					memset(buff, 0, 2 * BUFFER_SAMPLES * sizeof(int16_t));
+					snd_write_wrapper(sp->handle, buff, BUFFER_SAMPLES, health);
+					delete[] buff;
+				} else if (qsz > QUEUE_SIZE_TOO_BIG) {
+					sp->q.pop();
+				} else {
+					health = 64;
+					vector<int16_t> a = sp->q.front(); sp->q.pop();
+					lock.unlock();
+					int16_t* buff = new int16_t[a.size()];
+					for (size_t i=0; i<a.size(); i++) buff[i] = a[i];
+					snd_write_wrapper(sp->handle, buff, BUFFER_SAMPLES, health);
+					delete[] buff;
+				}
 			}
 		}
 	}

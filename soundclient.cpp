@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
 
 	if (argc <= 1 || argc > 3) {
 		cout << "soundclient <host ip> [<port>=3333]\n";
+		return 0;
 	}
 
 	const char* host_ip = argv[1];
@@ -32,7 +33,7 @@ int main(int argc, char** argv) {
 
 			int val = (int)b1 * 256 + b0;
 			int16_t x = val - 32768;
-			a.push_back(10*x);
+			a.push_back(x);
 		}
 
 		/*
