@@ -13,9 +13,9 @@ using namespace std::chrono;
 
 void demo() {
 	SoundRecorder srec;
-	srec.run([](vector<int16_t>&& a) {
+	srec.run([](vector<uint32_t>&& a) {
 		double tot = 0;
-		for (int16_t x : a) {
+		for (uint32_t x : a) {
 			tot += (double)x*x;
 		}
 		tot = sqrt(tot / a.size());
@@ -26,16 +26,18 @@ void demo() {
 namespace ss_instance {
 	SoundRecorder* ptr;
 
+	const int BACKLOG_SIZE = 32;
+
 	size_t block_id = 0;
-	map<size_t, vector<int16_t>> backlog;
+	map<size_t, vector<uint32_t>> backlog;
 	mutex mtx;
 
-	void update(vector<int16_t>&& a) {
+	void update(vector<uint32_t>&& a) {
 		unique_lock<mutex> lock(mtx);
 		block_id++;
 		backlog[block_id] = a;
-		if (block_id >= 16) {
-			backlog.erase(block_id - 16);
+		if (block_id >= BACKLOG_SIZE) {
+			backlog.erase(block_id - BACKLOG_SIZE);
 		}
 	}
 }
@@ -62,19 +64,23 @@ void ss_run(State* obj) {
 			// poranili smo, cekamo da se pojavi ovaj blok
 			lock.unlock();
 			this_thread::sleep_for(milliseconds(5));
-		} else if (next_block_id + 16 > ss_instance::block_id) {
+		} else if (next_block_id + ss_instance::BACKLOG_SIZE
+				> ss_instance::block_id)
+		{
 			// ocitaj ovaj blok, posalji ga na socket
-			vector<int16_t> data = ss_instance::backlog[next_block_id++];
+			vector<uint32_t> data = ss_instance::backlog[next_block_id++];
 			lock.unlock();
 
 			string str;
-			for (int16_t x : data) {
-				// ocitaj kao two's complement i stavi (little endian)
-				size_t y = (int)x + 32768;
-				uint8_t b0 = y & 0xff;
-				uint8_t b1 = (y >> 8) & 0xff;
+			for (uint32_t x : data) {
+				uint8_t b0 = x & 0xff;
+				uint8_t b1 = (x >> 8) & 0xff;
+				uint8_t b2 = (x >> 16) & 0xff;
+				uint8_t b3 = (x >> 24) & 0xff;
 				str.push_back(b0);
 				str.push_back(b1);
+				str.push_back(b2);
+				str.push_back(b3);
 			}
 			obj->sock.send(str);
 		} else {

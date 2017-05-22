@@ -26,14 +26,15 @@ int main(int argc, char** argv) {
 
 	auto recv_callback = [&](const string& str) {
 		// cerr << "Audio block, bytes: " << str.size() << '\n';
-		vector<int16_t> a;
-		for (size_t i=0; i<str.size(); i+=2) {
-			uint8_t b0 = str[i];
-			uint8_t b1 = str[i+1];
+		vector<uint32_t> a;
+		for (size_t i=0; i<str.size(); i+=4) {
+			uint32_t b0 = str[i];
+			uint32_t b1 = str[i+1];
+			uint32_t b2 = str[i+2];
+			uint32_t b3 = str[i+3];
 
-			int val = (int)b1 * 256 + b0;
-			int16_t x = val - 32768;
-			a.push_back(x);
+			uint32_t val = b0 + (b1 << 8) + (b2 << 16) + (b3 << 24);
+			a.push_back(val);
 		}
 
 		/*
