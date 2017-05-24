@@ -11,18 +11,6 @@
 using namespace std;
 using namespace std::chrono;
 
-void demo() {
-	SoundRecorder srec;
-	srec.run([](vector<uint32_t>&& a) {
-		double tot = 0;
-		for (uint32_t x : a) {
-			tot += (double)x*x;
-		}
-		tot = sqrt(tot / a.size());
-		cout << "Pwr: " << tot << '\n';
-	});
-}
-
 namespace ss_instance {
 	SoundRecorder* ptr;
 
@@ -48,7 +36,9 @@ struct State {
 };
 
 // Pri uspostavljanju konekcije ne radimo nista
-void ss_recv(State* obj, const string& str) {}
+void ss_recv(State* obj, string&& str) {
+
+}
 
 // Prava magija se desava u ovoj funkciji
 void ss_run(State* obj) {
@@ -82,7 +72,10 @@ void ss_run(State* obj) {
 				str.push_back(b2);
 				str.push_back(b3);
 			}
-			obj->sock.send(str);
+			if (!obj->sock.send(move(str))) {
+				// zavrsi, socket je diskonektovan
+				break;
+			}
 		} else {
 			// zavrsi, previse kasnis!
 			break;

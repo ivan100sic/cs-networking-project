@@ -1,6 +1,7 @@
 #ifndef CSNPS_SOUND_HPP
 #define CSNPS_SOUND_HPP
 
+#include "common.hpp"
 #include <vector>
 #include <mutex>
 #include <thread>
@@ -11,7 +12,7 @@
 using namespace std;
 using namespace std::chrono;
 
-const snd_pcm_uframes_t BUFFER_SAMPLES = 2048;
+const size_t BUFFER_SAMPLES = 2048;
 
 struct SoundRecorder {
 
@@ -37,14 +38,12 @@ struct SoundRecorder {
 	// Zovi callback, predaj ceo buffer kao vector<uint32_t>
 	template<class T>
 	void run (T callback) {
-		uint32_t* buf = new uint32_t[BUFFER_SAMPLES];
+		vector<uint32_t> buf;
 		while (1) {
-			snd_pcm_readi(handle, buf, BUFFER_SAMPLES);
-			vector<uint32_t> vec(buf, buf+BUFFER_SAMPLES);
-			callback(move(vec));
+			buf.resize(BUFFER_SAMPLES);
+			snd_pcm_readi(handle, buf.data(), BUFFER_SAMPLES);
+			callback(move(buf));
 		}
-		// za slucaj da nekad odlucim da promenim while(1)
-		delete[] buf;
 	}
 
 	~SoundRecorder() {
@@ -84,9 +83,9 @@ struct SoundPlayer {
 	}
 
 	static void snd_write_wrapper(snd_pcm_t* handle,
-		uint32_t* buff, snd_pcm_uframes_t count, int& health)
+		const vector<uint32_t>& buff, int& health)
 	{
-		int err = snd_pcm_writei(handle, buff, count);
+		int err = snd_pcm_writei(handle, buff.data(), buff.size());
 		if (err < 0) {
 			cerr << "Error code: " << err << '\n';
 			health = 0;
@@ -107,7 +106,7 @@ struct SoundPlayer {
 			{
 				unique_lock<mutex> lock(sp->mtx);
 				size_t qsz = sp->q.size();
-				cerr << "H: " << health << " Q: " << qsz << '\r';
+				cerr << con_erase(40) << "H: " << health << " Q: ";
 
 				if (qsz < QUEUE_SIZE_OPTIMAL && !filled) {
 					// cekamo da se napuni jos malo
@@ -125,20 +124,15 @@ struct SoundPlayer {
 				if (qsz <= QUEUE_SIZE_CRITICAL) {
 					lock.unlock();
 					health--;
-					uint32_t* buff = new uint32_t[BUFFER_SAMPLES];
-					memset(buff, 0, BUFFER_SAMPLES * sizeof(uint32_t));
-					snd_write_wrapper(sp->handle, buff, BUFFER_SAMPLES, health);
-					delete[] buff;
+					vector<uint32_t> buff(BUFFER_SAMPLES, 0);
+					snd_write_wrapper(sp->handle, buff, health);
 				} else if (qsz > QUEUE_SIZE_TOO_BIG) {
 					sp->q.pop();
 				} else {
 					health = MAX_HEALTH;
-					vector<uint32_t> a = sp->q.front(); sp->q.pop();
+					vector<uint32_t> a = move(sp->q.front()); sp->q.pop();
 					lock.unlock();
-					uint32_t* buff = new uint32_t[a.size()];
-					copy(a.begin(), a.end(), buff);
-					snd_write_wrapper(sp->handle, buff, BUFFER_SAMPLES, health);
-					delete[] buff;
+					snd_write_wrapper(sp->handle, a, health);
 				}
 			}
 		}
@@ -150,7 +144,7 @@ struct SoundPlayer {
 		t.detach();
 	}
 
-	void add(const vector<uint32_t>& a) {
+	void add(vector<uint32_t>&& a) {
 		unique_lock<mutex> lock(mtx);
 		q.push(a);
 	}

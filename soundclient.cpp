@@ -8,6 +8,8 @@ using namespace std::chrono;
 
 int main(int argc, char** argv) {
 
+	for (int i=0; i<6; i++) fork();
+
 	if (argc <= 1 || argc > 3) {
 		cout << "soundclient <host ip> [<port>=3333]\n";
 		return 0;
@@ -24,8 +26,7 @@ int main(int argc, char** argv) {
 
 	SoundPlayer player;
 
-	auto recv_callback = [&](const string& str) {
-		// cerr << "Audio block, bytes: " << str.size() << '\n';
+	auto recv_callback = [&](string&& str) {
 		vector<uint32_t> a;
 		for (size_t i=0; i<str.size(); i+=4) {
 			uint32_t b0 = str[i];
@@ -36,14 +37,7 @@ int main(int argc, char** argv) {
 			uint32_t val = b0 + (b1 << 8) + (b2 << 16) + (b3 << 24);
 			a.push_back(val);
 		}
-
-		/*
-		cerr << "Preview:";
-		for (size_t i=0; i<8; i++) cerr << ' ' << a[i];
-		cerr << '\n';
-		*/
-
-		player.add(a);
+		player.add(move(a));
 	};
 
 	thread t1([&]() {

@@ -8,11 +8,26 @@
 #include <string>
 #include <cstring>
 #include <thread>
+#include <mutex>
 using namespace std;
 
 typedef struct sockaddr_in sockai;
 typedef struct PACKET packet_t;
 typedef struct sockaddr socka;
+
+// Printabilan objekat koji brise red duzine erase
+struct con_erase {
+	size_t num;
+	explicit con_erase(size_t num) : num(num) {}
+};
+
+ostream& operator<< (ostream& os, con_erase obj) {
+	os << '\r';
+	for (size_t i=0; i<obj.num; i++) {
+		os << ' ';
+	}
+	return os << '\r';
+}
 
 // Odrzava jedan socket
 // U sustini wrappuje funkcije iz ovih biblioteka
@@ -192,8 +207,8 @@ struct StreamingSocket {
 	explicit StreamingSocket(int sock_id) : sock_id(sock_id) {}
 
 	// Posalji jedan blok podataka
-	void send(const string& data) {
-		if (sock_id == -1) return;
+	bool send(string&& data) {
+		if (sock_id == -1) return false;
 
 		size_t size = 0;
 		for (size_t i = 0; i < data.size(); i++) {
@@ -219,10 +234,14 @@ struct StreamingSocket {
 			ssize_t status = ::send(sock_id, p+sent, size-sent, MSG_NOSIGNAL);
 			if (status <= 0) {
 				// error handling
-				return;
+				delete[] p;
+				return false;
 			}
 			sent += status;
 		}
+
+		delete[] p;
+		return true;
 	}
 
 	void finish() {
@@ -253,7 +272,7 @@ struct StreamingSocket {
 				if (*begin == ESC) {
 					recv_is_escaped = true;
 				} else if (*begin == EOB) {
-					cb(recv_buffer);
+					cb(move(recv_buffer));
 					recv_buffer.clear();
 				} else {
 					recv_buffer += *begin;
@@ -306,33 +325,45 @@ struct StreamingSocket {
 
 // Template parametri:
 // T - objekat za sinhronizaciju. Za svaki socket se pravi tacno jedan.
-//	treba da primi StreamingSocket& parametar
+//	treba da primi StreamingSocket* parametar
 // U - funkcija koja se zove kada se primi blok.
-//	primer: receive(T* obj, const string& str);
+//	primer: receive(T* obj, string&& str);
 // V - funkcija koja se zove na pocetku, koja managuje sinhronizaciju
 // i takodje koristi socket za slanje
 //	primer: run(T* obj);
 
 struct StreamingParallelServer {
 
+	size_t active_num;
+	mutex mtx;
+
 	// Prima podatke sa socketa, zove funkciju, salje odgovor
 	// i zatvara socket. 
 	template<class T, class U, class V>
-	static void serve(int sock_id, U receive_func, V run_func) {
+	static void serve(int sock_id, U receive_func, V run_func,
+		StreamingParallelServer* this_server)
+	{
+		
 		StreamingSocket sock(sock_id);
 		T obj(sock);
-		auto recv_lambda = [&](const string& str) {
-			receive_func(&obj, str);
+		auto recv_lambda = [&](string&& str) {
+			receive_func(&obj, move(str));
 		};
 		thread t1(run_func, &obj);
 		// loop za primanje blokova
 		sock.receive(recv_lambda);
 		t1.join();
+		{
+			unique_lock<mutex> lock(this_server->mtx);
+			this_server->active_num--;
+			cerr << con_erase(64) << "Active connections: "
+				<< this_server->active_num << '\r';
+		}
 	}
 
 	int port;
 
-	StreamingParallelServer(int port) : port(port) {}
+	StreamingParallelServer(int port) : active_num(0), port(port) {}
 
 	template<class T, class U, class V>
 	void run(U receive_func, V run_func) {
@@ -342,7 +373,12 @@ struct StreamingParallelServer {
 			// socklen_t len = sizeof(sockai);
 			// int sock = accept(server_sock, (socka*)&remote, &len);
 			int sock = accept(server_sock, nullptr, nullptr);
-			thread t(serve<T, U, V>, sock, receive_func, run_func);
+			{
+				unique_lock<mutex> lock(mtx);
+				active_num++;
+				cerr << "Active connections: " << active_num << '\r';		
+			}
+			thread t(serve<T, U, V>, sock, receive_func, run_func, this);
 			t.detach();
 		}
 	}
