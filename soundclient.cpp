@@ -8,8 +8,6 @@ using namespace std::chrono;
 
 int main(int argc, char** argv) {
 
-	for (int i=0; i<6; i++) fork();
-
 	if (argc <= 1 || argc > 3) {
 		cout << "soundclient <host ip> [<port>=3333]\n";
 		return 0;
