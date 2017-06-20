@@ -1,5 +1,5 @@
 CCC=g++ -pthread -O2 -std=c++14 -Wall
-all: server client
+all: server client streamserver streamclient stream soundtest sound soundserver soundclient
 
 server: server.cpp common.hpp
 	$(CCC) server.cpp -o server

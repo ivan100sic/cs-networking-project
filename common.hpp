@@ -187,8 +187,8 @@ struct SimpleParallelServer {
 	void run(T cb) {
 		int server_sock = Socket::get_server(port);
 		while (1) {
-			sockai remote;
-			socklen_t len = sizeof(sockai);
+			// sockai remote;
+			// socklen_t len = sizeof(sockai);
 			// int sock = accept(server_sock, (socka*)&remote, &len);
 			int sock = accept(server_sock, nullptr, nullptr);
 			thread t(serve<T>, sock, cb);
